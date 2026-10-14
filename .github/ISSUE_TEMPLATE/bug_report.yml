@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible issue (no private footage or credentials)
+title: '[Bug] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting! This is a personal spare-time project; the maintainer may not be able to respond or investigate. **Never include credentials, private footage, unredacted IP addresses, URLs with passwords or API tokens.**
+  - type: input
+    id: homeassistant
+    attributes:
+      label: Home Assistant Core version / installation type
+      placeholder: 'e.g. 2026.10.1, Container'
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Reolink model and stream (no camera IP)
+      placeholder: 'e.g. dual-lens model, channel 2 Fluent'
+  - type: dropdown
+    id: destination
+    attributes:
+      label: Failing path
+      options:
+        - ntfy image
+        - ntfy video
+        - Immich image
+        - Immich video
+        - Recording / RTSP
+        - Cleanup / config / other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps and sanitized error
+      description: Include the failed trace action and error message after removing private data.
+    validations:
+      required: true

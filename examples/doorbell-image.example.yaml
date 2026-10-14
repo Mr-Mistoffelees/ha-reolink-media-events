@@ -1,0 +1,17 @@
+# Example only – do NOT copy to active HA packages without adjusting inputs.
+# Use these values in the blueprint UI or an automations.yaml entry.
+alias: "Front door | Doorbell pressed"
+use_blueprint:
+  path: kamera_medien/reolink_medien.yaml
+  input:
+    event_id: doorbell_pressed
+    detection_sensor: binary_sensor.REPLACE_WITH_DOORBELL_TRIGGER
+    snapshot_camera: camera.REPLACE_WITH_DOORBELL_SNAPSHOT
+    ntfy_mode: image
+    ntfy_target: notify.REPLACE_WITH_NTFY_TOPIC
+    ntfy_title: Someone is at the door
+    ntfy_message: Doorbell pressed
+    ntfy_priority: 4
+    immich_mode: none
+    cleanup_files: true
+    debug: false

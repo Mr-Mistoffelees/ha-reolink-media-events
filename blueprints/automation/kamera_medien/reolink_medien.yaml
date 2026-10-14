@@ -1,0 +1,362 @@
+# Reolink Kamera-Medien Blueprint – Modul 4
+# Ein Sensorereignis = eine eigenständige Automation aus diesem Blueprint.
+# Videos: script.kamera_medien_video (Runtime mit optionaler Stream-Auswahl).
+# Immich-Snapshots: script.kamera_medien_immich_bild (zusätzliches Package).
+# ntfy-Sofortbild: direkt ntfy.publish, ohne Shell-Command und ohne Delay.
+blueprint:
+  name: "Reolink | Kameraereignis → ntfy / Immich"
+  description: >-
+    Ein Ereignis pro Automation: off→on eines Reolink-Binärsensors.
+    ntfy: nichts / sofortiges Bild / Video mit Ton (Standard: Fluent).
+    Immich: nichts / Snapshot / Video mit Ton (Standard: Clear).
+    Unabhängige Ausführungen, eindeutige Run-IDs und optionale Dateibereinigung.
+    Voraussetzung: kamera_medien_runtime.yaml (Modul 3) und
+    kamera_medien_snapshot.yaml (Modul 4).
+    Videokamera-ID bezeichnet einen Eintrag aus cameras.json; die
+    Bildquelle ist eine Home-Assistant-camera-Entität.
+  domain: automation
+  author: "NNNNNN"
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    ereignis:
+      name: "1 · Ereignis"
+      icon: mdi:motion-sensor
+      input:
+        event_id:
+          name: "Ereignis-ID"
+          description: "Eindeutig; Buchstaben, Ziffern, _ und -, z. B. garten_tier."
+          selector:
+            text: {}
+        detection_sensor:
+          name: "Ereignis-Binärsensor"
+          description: "Reagiert auf off → on."
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+
+    kamera:
+      name: "2 · Aufnahmequellen"
+      icon: mdi:cctv
+      input:
+        video_camera_id:
+          name: "Videokamera-ID für Immich-Video"
+          description: "Schlüssel aus /config/camera_media/cameras.json; bei nur Bild nicht erforderlich."
+          default: ""
+          selector:
+            text: {}
+        ntfy_video_camera_id:
+          name: "Andere Videokamera-ID für ntfy-Video (optional)"
+          description: "Leer = Video-Kamera-ID. Z. B. anderes Objektiv; Stream separat bei ntfy wählen."
+          default: ""
+          selector:
+            text: {}
+        snapshot_camera:
+          name: "Snapshot-Kamera (optional, bei Bildmodi erforderlich)"
+          description: "Home-Assistant-Kameraentität; Nah- oder Fernobjektiv frei wählbar."
+          default: ""
+          selector:
+            entity:
+              filter:
+                domain: camera
+        video_duration:
+          name: "Video-Aufnahmedauer für Immich"
+          default: 20
+          selector:
+            number:
+              min: 1
+              max: 40
+              step: 1
+              unit_of_measurement: s
+              mode: box
+        ntfy_video_duration:
+          name: "Video-Aufnahmedauer für ntfy"
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 40
+              step: 1
+              unit_of_measurement: s
+              mode: box
+
+    ntfy:
+      name: "3 · ntfy"
+      icon: mdi:bell-outline
+      input:
+        ntfy_mode:
+          name: "ntfy-Ausgabe"
+          default: none
+          selector:
+            select:
+              options:
+                - label: "Keine"
+                  value: none
+                - label: "Bild (sofort)"
+                  value: image
+                - label: "Video mit Audio"
+                  value: video
+        ntfy_video_stream:
+          name: "ntfy-Videoqualität / Stream"
+          description: "Clear oder Fluent; nur bei ntfy-Ausgabe Video relevant."
+          default: fluent
+          selector:
+            select:
+              options:
+                - label: "Fluent (klein, Standard)"
+                  value: fluent
+                - label: "Clear (hohe Auflösung)"
+                  value: clear
+        ntfy_target:
+          name: "ntfy-Topic (Notify-Entität)"
+          description: "z. B. notify.example_topic"
+          default: ""
+          selector:
+            entity:
+              filter:
+                domain: notify
+        ntfy_title:
+          name: "Benachrichtigungstitel"
+          default: "Kameraereignis"
+          selector:
+            text: {}
+        ntfy_message:
+          name: "Benachrichtigungstext"
+          default: "Ereignis erkannt"
+          selector:
+            text:
+              multiline: true
+        ntfy_priority:
+          name: "ntfy-Priorität (1–5)"
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 5
+              step: 1
+              mode: slider
+
+    immich:
+      name: "4 · Immich"
+      icon: mdi:image-multiple-outline
+      input:
+        immich_mode:
+          name: "Immich-Ausgabe"
+          default: none
+          selector:
+            select:
+              options:
+                - label: "Keine"
+                  value: none
+                - label: "Bild"
+                  value: image
+                - label: "Video mit Audio"
+                  value: video
+        immich_video_stream:
+          name: "Immich-Videoqualität / Stream"
+          description: "Clear oder Fluent; nur bei Immich-Ausgabe Video relevant."
+          default: clear
+          selector:
+            select:
+              options:
+                - label: "Clear (Original, Standard)"
+                  value: clear
+                - label: "Fluent (kleinere Datei)"
+                  value: fluent
+        immich_config_entry_id:
+          name: "Immich-Integration"
+          description: "Immich-Eintrag auswählen (nur bei aktiver Immich-Ausgabe)."
+          default: ""
+          selector:
+            config_entry:
+              integration: immich
+        immich_album_id:
+          name: "Vorhandene Immich-Album-UUID"
+          description: "Kein Albumname; fehlende Alben werden nicht angelegt."
+          default: ""
+          selector:
+            text: {}
+
+    betrieb:
+      name: "5 · Betrieb und Diagnose"
+      icon: mdi:tools
+      input:
+        cleanup_files:
+          name: "Erfolgreich übermittelte lokale Medien löschen"
+          default: true
+          selector:
+            boolean: {}
+        debug:
+          name: "Zusätzliche Logbuch-Einträge"
+          default: false
+          selector:
+            boolean: {}
+
+# Jede Blueprint-Instanz hat eigenen Zustand und eigenen Trace.
+# Mehrere Auslösungen desselben Ereignisses dürfen gleichzeitig laufen.
+mode: parallel
+max: 20
+max_exceeded: warning
+trace:
+  stored_traces: 30
+
+triggers:
+  - trigger: state
+    entity_id: !input detection_sensor
+    from: "off"
+    to: "on"
+
+conditions: []
+
+variables:
+  bp_event_id: !input event_id
+  bp_video_camera: !input video_camera_id
+  bp_ntfy_camera_override: !input ntfy_video_camera_id
+  bp_snapshot_camera: !input snapshot_camera
+  bp_immich_duration: !input video_duration
+  bp_ntfy_duration: !input ntfy_video_duration
+  bp_ntfy_mode: !input ntfy_mode
+  bp_ntfy_video_stream: !input ntfy_video_stream
+  bp_ntfy_target: !input ntfy_target
+  bp_ntfy_title: !input ntfy_title
+  bp_ntfy_message: !input ntfy_message
+  bp_ntfy_priority: !input ntfy_priority
+  bp_immich_mode: !input immich_mode
+  bp_immich_video_stream: !input immich_video_stream
+  bp_immich_config: !input immich_config_entry_id
+  bp_immich_album: !input immich_album_id
+  bp_cleanup: !input cleanup_files
+  bp_debug: !input debug
+  # Einmalig je Ausführung, von beiden Zweigen verwendet.
+  bp_run_id: >-
+    {{ now().strftime('%Y%m%dT%H%M%S_%f') }}_{{ range(10000, 99999) | random }}
+
+# Keine Verzögerung oder Aufnahme VOR ntfy-Bild.
+actions:
+  - alias: "Parameter normalisieren"
+    variables:
+      _event: "{{ bp_event_id | trim }}"
+      _ntfy: "{{ bp_ntfy_mode }}"
+      _immich: "{{ bp_immich_mode }}"
+      _snapshot: "{{ bp_snapshot_camera | default('', true) }}"
+      _video_camera: "{{ bp_video_camera | default('', true) }}"
+      _ntfy_video_camera: >-
+        {{ bp_ntfy_camera_override if bp_ntfy_camera_override | default('') else bp_video_camera }}
+      _cleanup: "{{ bp_cleanup | bool }}"
+      _debug: "{{ bp_debug | bool }}"
+
+  - alias: "Konfiguration auf fehlende Pflichtangaben prüfen"
+    if:
+      - condition: template
+        value_template: >-
+          {{ not (_event | regex_match('^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$'))
+             or (_ntfy == 'none' and _immich == 'none')
+             or (_ntfy != 'none' and not bp_ntfy_target)
+             or (_ntfy == 'image' or _immich == 'image') and not _snapshot
+             or (_ntfy == 'video' and not _ntfy_video_camera)
+             or (_immich == 'video' and not _video_camera)
+             or (_immich != 'none' and (not bp_immich_config or not bp_immich_album)) }}
+    then:
+      - action: persistent_notification.create
+        data:
+          title: "Kamera-Medien: Blueprint-Konfiguration ungültig"
+          notification_id: "kamera_medien_blueprint_konfiguration_{{ _event }}"
+          message: >-
+            Ereignis {{ _event }}: Prüfe Kameraquelle, ntfy-Topic,
+            Immich-Integration/-Album und Ausgabemodi. Run: {{ bp_run_id }}.
+      - stop: "Ungültige Medien-Blueprint-Konfiguration"
+        error: true
+
+  - alias: "Optionalen Ereignisstart protokollieren"
+    if:
+      - condition: template
+        value_template: "{{ _debug }}"
+    then:
+      - action: logbook.log
+        data:
+          name: "Kamera-Medien"
+          message: >-
+            {{ _event }}/{{ bp_run_id }}: ausgelöst
+            (ntfy={{ _ntfy }}/{{ bp_ntfy_video_stream }},
+            Immich={{ _immich }}/{{ bp_immich_video_stream }}).
+
+  - alias: "ntfy und Immich unabhängig ausführen"
+    parallel:
+      # Zweig 1: ntfy-Bild sofort, ntfy-Video asynchron zur Immich-Verarbeitung.
+      - sequence:
+          - alias: "ntfy-Modus auswählen"
+            choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ _ntfy == 'image' }}"
+                sequence:
+                  - alias: "Sofortbild direkt über ntfy verschicken"
+                    action: ntfy.publish
+                    target:
+                      entity_id: "{{ bp_ntfy_target }}"
+                    data:
+                      title: "{{ bp_ntfy_title }}"
+                      message: "{{ bp_ntfy_message }}"
+                      priority: "{{ bp_ntfy_priority | int }}"
+                      attach_file:
+                        media_content_id: "media-source://camera/{{ _snapshot }}"
+                        media_content_type: application/vnd.apple.mpegurl
+                      filename: "{{ _event }}_snapshot.jpg"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ _ntfy == 'video' }}"
+                sequence:
+                  - alias: "ntfy-Video aufnehmen und zustellen"
+                    action: script.kamera_medien_video
+                    data:
+                      event_id: "{{ _event }}"
+                      run_id: "{{ bp_run_id }}"
+                      camera_id: "{{ _ntfy_video_camera }}"
+                      purpose: ntfy
+                      stream: "{{ bp_ntfy_video_stream }}"
+                      duration: "{{ bp_ntfy_duration | int }}"
+                      ntfy_target: "{{ bp_ntfy_target }}"
+                      ntfy_title: "{{ bp_ntfy_title }}"
+                      ntfy_message: "{{ bp_ntfy_message }}"
+                      ntfy_priority: "{{ bp_ntfy_priority | int }}"
+                      cleanup_files: "{{ _cleanup }}"
+                      debug: "{{ _debug }}"
+
+      # Zweig 2: Immich-Bild oder hochauflösendes Video.
+      - sequence:
+          - alias: "Immich-Modus auswählen"
+            choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ _immich == 'image' }}"
+                sequence:
+                  - alias: "Snapshot aufnehmen und ins Album hochladen"
+                    action: script.kamera_medien_immich_bild
+                    data:
+                      event_id: "{{ _event }}"
+                      run_id: "{{ bp_run_id }}"
+                      snapshot_camera: "{{ _snapshot }}"
+                      immich_config_entry_id: "{{ bp_immich_config }}"
+                      immich_album_id: "{{ bp_immich_album }}"
+                      cleanup_files: "{{ _cleanup }}"
+                      debug: "{{ _debug }}"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ _immich == 'video' }}"
+                sequence:
+                  - alias: "Immich-Video aufnehmen und ins Album hochladen"
+                    action: script.kamera_medien_video
+                    data:
+                      event_id: "{{ _event }}"
+                      run_id: "{{ bp_run_id }}"
+                      camera_id: "{{ _video_camera }}"
+                      purpose: immich
+                      stream: "{{ bp_immich_video_stream }}"
+                      duration: "{{ bp_immich_duration | int }}"
+                      immich_config_entry_id: "{{ bp_immich_config }}"
+                      immich_album_id: "{{ bp_immich_album }}"
+                      cleanup_files: "{{ _cleanup }}"
+                      debug: "{{ _debug }}"

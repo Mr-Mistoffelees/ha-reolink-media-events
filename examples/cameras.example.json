@@ -1,0 +1,23 @@
+{
+  "garden_wide": {
+    "host": "192.0.2.10",
+    "username": "REPLACE_WITH_REOLINK_USER",
+    "password": "REPLACE_WITH_REOLINK_PASSWORD",
+    "channel": 1,
+    "port": 554
+  },
+  "garden_tele": {
+    "host": "192.0.2.10",
+    "username": "REPLACE_WITH_REOLINK_USER",
+    "password": "REPLACE_WITH_REOLINK_PASSWORD",
+    "channel": 2,
+    "port": 554
+  },
+  "front_door": {
+    "host": "192.0.2.11",
+    "username": "REPLACE_WITH_REOLINK_USER",
+    "password": "REPLACE_WITH_REOLINK_PASSWORD",
+    "channel": 1,
+    "port": 554
+  }
+}

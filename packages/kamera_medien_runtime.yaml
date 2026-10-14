@@ -1,0 +1,331 @@
+# Modul 2: Home-Assistant-Laufzeit für Kamera-Videos.
+# Das bestehende Package kamera_medien.yaml und record.py bleiben unverändert.
+# Voraussetzung: /config/camera_media/record_v2.py + cameras.json aus Modul 1.
+#
+# Aufruf durch spätere Blueprint-Instanzen:
+#   script.kamera_medien_video
+#   camera_id: z. B. testkamera (Schlüssel aus cameras.json)
+#   event_id: z. B. klingel_person
+#   run_id: innerhalb eines Ereignisses für alle Zweige identisch
+#   purpose: ntfy oder immich
+#   stream: optional clear/fluent; fehlt: ntfy=fluent, immich=clear
+#   duration: 1..40 (siehe Aufnahmeskript)
+#   ntfy_target / ntfy_title / ntfy_message / ntfy_priority: bei purpose=ntfy
+#   immich_config_entry_id / immich_album_id: bei purpose=immich
+#   debug: optional
+#
+# WICHTIG: shell_command wird nach 60 Sekunden beendet.
+# Modul 3: Erfolgreich zugestellte Dateien können optional gelöscht werden.
+# Ohne cleanup_files bleibt das Modul abwärtskompatibel: Standard ist false.
+
+shell_command:
+  kamera_medien_record_v2: >-
+    python3 /config/camera_media/record_v2.py
+    --camera "{{ camera_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+    --stream "{{ stream | regex_replace('[^A-Za-z]', '') }}"
+    --duration {{ duration | int }}
+    --event "{{ event_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+    --purpose "{{ purpose | regex_replace('[^A-Za-z]', '') }}"
+    --run-id "{{ run_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+
+  # Keine freien Dateipfade übergeben: Löschen nur über validierte Kennungen.
+  kamera_medien_cleanup: >-
+    python3 /config/camera_media/cleanup_media.py
+    --event "{{ event_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+    --run-id "{{ run_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+    --purpose "{{ purpose | regex_replace('[^A-Za-z]', '') }}"
+
+script:
+  kamera_medien_video:
+    alias: "Kamera-Medien | Video aufnehmen und zustellen"
+    description: >-
+      Gemeinsamer Videopfad mit optionalem Stream (clear oder fluent).
+      Ohne Stream-Angabe: ntfy -> Fluent, immich -> Clear (abwärtskompatibel).
+      Je Durchlauf separates FFmpeg, Fehler im Script-Trace, Aufnahmepannen
+      zusätzlich als persistente Home-Assistant-Benachrichtigung.
+    mode: parallel
+    max: 12
+    max_exceeded: warning
+    trace:
+      stored_traces: 30
+    fields:
+      event_id:
+        name: Ereignis-ID
+        description: "Stabile Kennung, z. B. garten_tier"
+        required: true
+        selector:
+          text:
+      camera_id:
+        name: Kamera-ID
+        description: "Schlüssel aus /config/camera_media/cameras.json"
+        required: true
+        selector:
+          text:
+      run_id:
+        name: Durchlauf-ID
+        description: "Einmal pro Ereignis vergeben und an alle Zweige übergeben"
+        required: true
+        selector:
+          text:
+      purpose:
+        name: Ziel
+        required: true
+        selector:
+          select:
+            options:
+              - ntfy
+              - immich
+      stream:
+        name: Video-Stream
+        description: "Optional; ohne Angabe ntfy=fluent und immich=clear"
+        required: false
+        selector:
+          select:
+            options:
+              - fluent
+              - clear
+      duration:
+        name: Sekunden
+        required: true
+        selector:
+          number:
+            min: 1
+            max: 40
+            mode: box
+      ntfy_target:
+        name: ntfy-Entität
+        description: "Nur für ntfy; z. B. notify.testing"
+        selector:
+          entity:
+            domain: notify
+      ntfy_title:
+        name: ntfy-Titel
+        selector:
+          text:
+      ntfy_message:
+        name: ntfy-Nachricht
+        selector:
+          text:
+            multiline: true
+      ntfy_priority:
+        name: ntfy-Priorität
+        selector:
+          number:
+            min: 1
+            max: 5
+            mode: slider
+      immich_config_entry_id:
+        name: Immich-Integration-ID
+        description: "Nur für Immich"
+        selector:
+          text:
+      immich_album_id:
+        name: Immich-Album-UUID
+        description: "Nur für Immich; Album muss bereits vorhanden sein"
+        selector:
+          text:
+      debug:
+        name: Zusätzliche Logbucheinträge
+        selector:
+          boolean:
+      cleanup_files:
+        name: Erfolgreich zugestellte Videodatei löschen
+        description: >-
+          Nur nach erfolgreicher ntfy-/Immich-Aktion; ohne Angabe false,
+          damit bestehende Aufrufe nicht unvermittelt Dateien löschen.
+        selector:
+          boolean:
+
+    sequence:
+      - alias: "Eingaben normalisieren und Aufnahmequelle auswählen"
+        variables:
+          _event: "{{ event_id | default('unbekannt', true) }}"
+          _run: "{{ run_id | default('unbekannt', true) }}"
+          _purpose: "{{ purpose | default('unbekannt', true) }}"
+          _camera: "{{ camera_id | default('', true) }}"
+          _duration: "{{ duration | default(0) | int }}"
+          # Fallback ist ausdrücklich in der Laufzeit-Logik, nicht nur im UI-Feld.
+          # Bestehende Aufrufer ohne `stream` bleiben damit unverändert.
+          _stream: >-
+            {{ stream | default('fluent' if purpose | default('') == 'ntfy' else 'clear', true) }}
+          _debug: "{{ debug | default(false) | bool }}"
+          _cleanup_enabled: "{{ cleanup_files | default(false) | bool }}"
+
+      # Vorher prüfen: keine Aufnahme mit offensichtlich ungültigen Zielen starten.
+      - alias: "Pflichtparameter validieren"
+        if:
+          - condition: template
+            value_template: >-
+              {{ _purpose not in ['ntfy', 'immich']
+                 or _camera == '' or _event == 'unbekannt' or _run == 'unbekannt'
+                 or not (1 <= (_duration | int) <= 40)
+                 or _stream not in ['clear', 'fluent']
+                 or (_purpose == 'ntfy' and not (ntfy_target | default('')))
+                 or (_purpose == 'immich' and
+                     (not (immich_config_entry_id | default('')) or
+                      not (immich_album_id | default('')))) }}
+        then:
+          - stop: "Kamera-Medien: fehlende oder unzulässige Parameter"
+            error: true
+
+      - alias: "Optional Start ins Logbuch schreiben"
+        if:
+          - condition: template
+            value_template: "{{ _debug }}"
+        then:
+          - action: logbook.log
+            data:
+              name: "Kamera-Medien"
+              message: >-
+                {{ _event }}/{{ _run }}: Start {{ _purpose }},
+                Kamera={{ _camera }}, Stream={{ _stream }}, Sekunden={{ _duration }}
+
+      - alias: "FFmpeg-Aufnahme starten und auf Fertigstellung warten"
+        action: shell_command.kamera_medien_record_v2
+        data:
+          camera_id: "{{ _camera }}"
+          stream: "{{ _stream }}"
+          duration: "{{ _duration }}"
+          event_id: "{{ _event }}"
+          purpose: "{{ _purpose }}"
+          run_id: "{{ _run }}"
+        response_variable: _ffmpeg
+
+      - alias: "Rückgabecode und Datei-Metadaten interpretieren"
+        variables:
+          _rec: "{{ (_ffmpeg | default({})).get('stdout', '') | from_json(default={}) }}"
+          _rc: "{{ (_ffmpeg | default({})).get('returncode', -1) | int }}"
+          _err: "{{ (_ffmpeg | default({})).get('stderr', '') }}"
+
+      - alias: "Fehlerhafte Aufnahme sichtbar melden und stoppen"
+        if:
+          - condition: template
+            value_template: >-
+              {{ _rc != 0 or not _rec.get('success', false)
+                 or not _rec.get('media_content_id', '') }}
+        then:
+          - action: persistent_notification.create
+            data:
+              title: "Kamera-Medien: Aufnahme fehlgeschlagen"
+              notification_id: "kamera_medien_{{ _event }}_{{ _purpose }}"
+              message: >-
+                Ereignis: {{ _event }} / {{ _run }}
+                Kamera: {{ _camera }} ({{ _stream }})
+                Fehlercode: {{ _rc }}
+                Details: {{ (_err | string) | truncate(800, true) }}
+          - stop: "FFmpeg-Aufnahme fehlgeschlagen (Details in HA-Benachrichtigung)"
+            error: true
+
+      - alias: "Optional erfolgreiche Aufnahme protokollieren"
+        if:
+          - condition: template
+            value_template: "{{ _debug }}"
+        then:
+          - action: logbook.log
+            data:
+              name: "Kamera-Medien"
+              message: >-
+                {{ _event }}/{{ _run }}: Aufnahme fertig,
+                Datei={{ _rec.filename }}, Größe={{ _rec.size_bytes }} Bytes
+
+      # Keine continue_on_error-Option: Wenn ntfy/Immich fehlschlägt,
+      # bleibt die Datei erhalten, der Script-Trace wird rot und die
+      # genaue Fehlermeldung steht im Trace/HA-Log. Eine API-Fehlerbehandlung
+      # per try/catch ist in HA-Script-YAML nicht zuverlässig verfügbar.
+      - alias: "Datei entsprechend dem Ziel zustellen"
+        choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ _purpose == 'ntfy' }}"
+            sequence:
+              - alias: "Video über ntfy versenden"
+                action: ntfy.publish
+                target:
+                  entity_id: "{{ ntfy_target }}"
+                data:
+                  title: "{{ ntfy_title | default('Kameraereignis', true) }}"
+                  message: "{{ ntfy_message | default('Ereignis erkannt', true) }}"
+                  priority: "{{ ntfy_priority | default(3) | int }}"
+                  attach_file:
+                    media_content_id: "{{ _rec.media_content_id }}"
+                    media_content_type: "{{ _rec.media_content_type }}"
+                  filename: "{{ _rec.filename }}"
+          - conditions:
+              - condition: template
+                value_template: "{{ _purpose == 'immich' }}"
+            sequence:
+              - alias: "Video nach Immich hochladen"
+                action: immich.upload_file
+                data:
+                  config_entry_id: "{{ immich_config_entry_id }}"
+                  file:
+                    media_content_id: "{{ _rec.media_content_id }}"
+                    media_content_type: "{{ _rec.media_content_type }}"
+                  album_id: "{{ immich_album_id }}"
+
+      # Die Ausführung gelangt nur hierhin, wenn ntfy.publish bzw.
+      # immich.upload_file erfolgreich zurückgekehrt ist. Bei Fehlern
+      # stoppt HA normalerweise das Skript, die Datei bleibt erhalten.
+      - alias: "Optional: Nur erfolgreich zugestellte Datei bereinigen"
+        if:
+          - condition: template
+            value_template: "{{ _cleanup_enabled }}"
+        then:
+          - alias: "Eine konkrete Mediendatei sicher löschen"
+            action: shell_command.kamera_medien_cleanup
+            data:
+              event_id: "{{ _event }}"
+              run_id: "{{ _run }}"
+              purpose: "{{ _purpose }}"
+            response_variable: _cleanup_result
+
+          - alias: "Bereinigungsergebnis interpretieren"
+            variables:
+              _cleanup_data: >-
+                {{ (_cleanup_result | default({})).get('stdout', '') | from_json(default={}) }}
+              _cleanup_code: "{{ (_cleanup_result | default({})).get('returncode', -1) | int }}"
+              _cleanup_error: "{{ (_cleanup_result | default({})).get('stderr', '') }}"
+
+          - alias: "Bereinigungsfehler sichtbar melden"
+            if:
+              - condition: template
+                value_template: >-
+                  {{ _cleanup_code != 0
+                     or not _cleanup_data.get('success', false)
+                     or not _cleanup_data.get('deleted', false) }}
+            then:
+              - action: persistent_notification.create
+                data:
+                  title: "Kamera-Medien: Bereinigung fehlgeschlagen"
+                  notification_id: "kamera_medien_cleanup_{{ _event }}_{{ _purpose }}"
+                  message: >-
+                    Ereignis: {{ _event }} / {{ _run }}
+                    Ziel: {{ _purpose }}
+                    Fehlercode: {{ _cleanup_code }}
+                    Details: {{ _cleanup_error | truncate(800, true) }}
+              - stop: "Dateibereinigung fehlgeschlagen (Datei prüfen)"
+                error: true
+
+          - alias: "Optional bereinigte Datei protokollieren"
+            if:
+              - condition: template
+                value_template: "{{ _debug }}"
+            then:
+              - action: logbook.log
+                data:
+                  name: "Kamera-Medien"
+                  message: >-
+                    {{ _event }}/{{ _run }}: {{ _purpose }}.mp4 nach
+                    erfolgreicher Übergabe lokal entfernt.
+
+      - alias: "Optional erfolgreiche Zustellung protokollieren"
+        if:
+          - condition: template
+            value_template: "{{ _debug }}"
+        then:
+          - action: logbook.log
+            data:
+              name: "Kamera-Medien"
+              message: >-
+                {{ _event }}/{{ _run }}: {{ _purpose }}-Aktion beendet,
+                Datei={{ _rec.filename }}

@@ -1,0 +1,36 @@
+# Credentials and user-specific configuration
+cameras.json
+**/cameras.json
+*.secret
+*.secrets
+.env
+.env.*
+secrets.yaml
+**/secrets.yaml
+
+# Media and diagnostics (private camera footage)
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.part
+*.lock
+*.log
+*.bak
+*.backup
+*.tar
+
+# Python and editors
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.venv*/
+.idea/
+.vscode/
+.DS_Store
+
+# Local runtime or installs
+config/
+media/
+backups/

@@ -1,0 +1,22 @@
+# Example only – tele lens RTSP channel must be verified for your model.
+alias: "Garden | Tele lens pet detection"
+use_blueprint:
+  path: kamera_medien/reolink_medien.yaml
+  input:
+    event_id: garden_tele_pet
+    detection_sensor: binary_sensor.REPLACE_WITH_GARDEN_PET_SENSOR
+    video_camera_id: garden_tele
+    ntfy_video_camera_id: garden_wide
+    snapshot_camera: camera.REPLACE_WITH_GARDEN_TELE_SNAPSHOT
+    ntfy_mode: video
+    ntfy_video_stream: fluent
+    ntfy_video_duration: 10
+    ntfy_target: notify.REPLACE_WITH_NTFY_TOPIC
+    ntfy_title: Garden pet detected
+    ntfy_message: Animal spotted
+    immich_mode: video
+    immich_video_stream: fluent
+    video_duration: 20
+    immich_config_entry_id: REPLACE_WITH_IMMICH_CONFIG_ENTRY_ID
+    immich_album_id: REPLACE_WITH_EXISTING_ALBUM_UUID
+    cleanup_files: true

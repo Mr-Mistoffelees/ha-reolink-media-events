@@ -1,0 +1,133 @@
+# Modul 4: Ergänzung zur bewährten Video-Runtime aus Modul 3.
+# Nicht kamera_medien_runtime.yaml ersetzen; dieses Package zusätzlich laden.
+# Für ein Immich-Bild: vorbereiten -> camera.snapshot -> immich.upload_file
+# -> bei cleanup=true genau diese Bilddatei sicher löschen.
+
+shell_command:
+  kamera_medien_snapshot_file: >-
+    python3 /config/camera_media/snapshot_media.py
+    --action "{{ operation | regex_replace('[^a-z]', '') }}"
+    --event "{{ event_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+    --run-id "{{ run_id | regex_replace('[^A-Za-z0-9_-]', '') }}"
+
+script:
+  kamera_medien_immich_bild:
+    alias: "Kamera-Medien | Snapshot nach Immich"
+    description: "Eine JPG-Datei für Immich aufnehmen, hochladen und optional löschen."
+    mode: parallel
+    max: 12
+    max_exceeded: warning
+    trace:
+      stored_traces: 30
+    sequence:
+      - alias: "Eingaben für Bildaufnahme normalisieren"
+        variables:
+          _event: "{{ event_id | default('', true) }}"
+          _run: "{{ run_id | default('', true) }}"
+          _snapshot_camera: "{{ snapshot_camera | default('', true) }}"
+          _immich_config: "{{ immich_config_entry_id | default('', true) }}"
+          _album: "{{ immich_album_id | default('', true) }}"
+          _cleanup: "{{ cleanup_files | default(false) | bool }}"
+          _debug: "{{ debug | default(false) | bool }}"
+
+      - alias: "Pflichtparameter und Dateikennungen prüfen"
+        if:
+          - condition: template
+            value_template: >-
+              {{ not (_event | regex_match('^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$'))
+                 or not (_run | regex_match('^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$'))
+                 or not _snapshot_camera.startswith('camera.')
+                 or not _immich_config or not _album }}
+        then:
+          - action: persistent_notification.create
+            data:
+              title: "Kamera-Medien: Snapshot-Konfiguration ungültig"
+              notification_id: "kamera_medien_snapshot_konfiguration"
+              message: "Ereignis: {{ _event }} / {{ _run }}. Benötigte Bild-/Immich-Parameter fehlen oder sind ungültig."
+          - stop: "Snapshot: fehlende oder ungültige Eingaben"
+            error: true
+
+      - alias: "Dateinamen vorbereiten (keine anderen Dateien überschreiben)"
+        action: shell_command.kamera_medien_snapshot_file
+        data:
+          operation: prepare
+          event_id: "{{ _event }}"
+          run_id: "{{ _run }}"
+        response_variable: _prepare
+
+      - alias: "Ergebnis der Vorbereitung prüfen"
+        variables:
+          _prepare_data: "{{ _prepare.stdout | default('') | from_json(default={}) }}"
+      - if:
+          - condition: template
+            value_template: >-
+              {{ _prepare.returncode | int(-1) != 0 or
+                 not _prepare_data.get('success', false) }}
+        then:
+          - action: persistent_notification.create
+            data:
+              title: "Kamera-Medien: Snapshot-Vorbereitung fehlgeschlagen"
+              notification_id: "kamera_medien_snapshot_{{ _event }}"
+              message: "Ereignis: {{ _event }} / {{ _run }}. {{ _prepare.stderr | default('') | truncate(800, true) }}"
+          - stop: "Snapshot-Datei konnte nicht vorbereitet werden"
+            error: true
+
+      - alias: "Snapshot von konfigurierter Kamera erzeugen"
+        action: camera.snapshot
+        target:
+          entity_id: "{{ _snapshot_camera }}"
+        data:
+          filename: "{{ _prepare_data.file }}"
+
+      - alias: "Snapshot in bereits vorhandenes Immich-Album hochladen"
+        action: immich.upload_file
+        data:
+          config_entry_id: "{{ _immich_config }}"
+          file:
+            media_content_id: >-
+              media-source://media_source/local/kamera_events/snapshots/{{ _event }}__{{ _run }}.jpg
+            media_content_type: image/jpeg
+          album_id: "{{ _album }}"
+
+      # Das HA-Skript erreicht die Bereinigung nur bei erfolgreichem Upload.
+      # Im Fehlerfall verbleibt das JPG vor Ort; Trace und HA-Log zeigen den Fehler.
+      - alias: "Optional erfolgreich hochgeladenes Bild löschen"
+        if:
+          - condition: template
+            value_template: "{{ _cleanup }}"
+        then:
+          - action: shell_command.kamera_medien_snapshot_file
+            data:
+              operation: cleanup
+              event_id: "{{ _event }}"
+              run_id: "{{ _run }}"
+            response_variable: _cleanup_result
+          - variables:
+              _cleanup_data: "{{ _cleanup_result.stdout | default('') | from_json(default={}) }}"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ _cleanup_result.returncode | int(-1) != 0 or
+                     not _cleanup_data.get('deleted', false) }}
+            then:
+              - action: persistent_notification.create
+                data:
+                  title: "Kamera-Medien: Snapshot-Bereinigung fehlgeschlagen"
+                  notification_id: "kamera_medien_snapshot_cleanup_{{ _event }}"
+                  message: >-
+                    Ereignis: {{ _event }} / {{ _run }}.
+                    {{ _cleanup_result.stderr | default('') | truncate(800, true) }}
+              - stop: "Snapshot-Bereinigung fehlgeschlagen"
+                error: true
+
+      - alias: "Optionalen Debug-Erfolg ins Logbuch schreiben"
+        if:
+          - condition: template
+            value_template: "{{ _debug }}"
+        then:
+          - action: logbook.log
+            data:
+              name: "Kamera-Medien"
+              message: >-
+                {{ _event }}/{{ _run }}: Immich-Snapshot hochgeladen,
+                lokal {{ 'gelöscht' if _cleanup else 'behalten' }}.
